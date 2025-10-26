@@ -1,0 +1,18 @@
+streamlit==1.28.0
+streamlit-folium==0.14.0
+folium==0.14.0
+plotly==5.17.0
+pandas==2.0.3
+numpy==1.24.3
+sqlalchemy==2.0.21
+python-dotenv==1.0.0
+pydantic==2.3.0
+openpyxl==3.1.2
+
+# PostgreSQL dependencies
+psycopg2-binary==2.9.7
+geoalchemy2==0.14.1
+shapely==2.0.1
+
+# Additional geospatial libraries
+geopy==2.3.0
