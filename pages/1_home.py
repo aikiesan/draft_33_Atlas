@@ -52,7 +52,7 @@ def render_cta_buttons():
 
     with col2:
         if st.button("🌍 Explore Projects", type="primary", use_container_width=True):
-            st.switch_page("pages/2_dashboard.py")
+            st.switch_page("app.py")
 
         if st.button("📝 Submit Your Project", use_container_width=True):
             st.switch_page("pages/3_submit.py")
@@ -224,7 +224,7 @@ def render_call_to_action():
 
     with col4:
         if st.button("📚 Browse Projects", use_container_width=True):
-            st.switch_page("pages/2_dashboard.py")
+            st.switch_page("app.py")
 
 def render_footer():
     """Render footer section"""

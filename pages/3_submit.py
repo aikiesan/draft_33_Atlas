@@ -490,7 +490,7 @@ def render_confirmation_screen(reference_id: str):
 
         with col1_inner:
             if st.button("🏠 Back to Dashboard", use_container_width=True):
-                st.switch_page("pages/2_dashboard.py")
+                st.switch_page("app.py")
 
         with col2_inner:
             if st.button("➕ Submit Another Project", use_container_width=True):

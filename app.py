@@ -1,13 +1,21 @@
 """
-Atlas 3+3 - Main Application Entry Point
-A curated atlas of sustainable development projects
+Atlas 3+3 - Main Application with Interactive Dashboard
+A curated atlas of sustainable development projects featuring 22 real-world SDG initiatives
 
 Run with: streamlit run app.py
+Updated: 2025-10-27 - Enhanced dashboard with bigger map display
 """
 
 import streamlit as st
 import sys
 import os
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import folium
+from streamlit_folium import st_folium
+import json
+from typing import Dict, List, Any, Optional
 
 # Add src directory to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
@@ -15,14 +23,25 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 from src.database_interface import get_cached_database
 from src.constants import (
     APP_NAME, APP_TAGLINE, APP_VERSION, CONTACT_EMAIL,
-    PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL
+    PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL, UIA_REGIONS, SDGS,
+    MAP_MARKER_SETTINGS, DEFAULT_MAP_CENTER, CHART_COLORS
 )
-from src.utils import is_admin_logged_in, get_session_value
+from src.utils import (
+    is_admin_logged_in, get_session_value, set_session_value,
+    format_currency, format_large_number, get_export_filename,
+    export_to_csv, export_to_xlsx, get_color_for_status,
+    get_color_for_sdg, truncate_text, get_map_bounds
+)
+
+# Initialize database using new interface
+@st.cache_resource
+def get_database():
+    return get_cached_database()
 
 def configure_page():
     """Configure the main Streamlit page settings"""
     st.set_page_config(
-        page_title=APP_NAME,
+        page_title=f"{APP_NAME} - Interactive Dashboard",
         page_icon="🌍",
         layout="wide",
         initial_sidebar_state="expanded",
@@ -62,13 +81,12 @@ def render_sidebar():
         # Navigation menu
         st.markdown("### 📍 Navigation")
 
-        # Home page
-        if st.button("🏠 Home", use_container_width=True):
-            st.switch_page("pages/1_home.py")
+        # Note: Dashboard is now the main page
+        st.info("📊 You're viewing the main dashboard")
 
-        # Dashboard
-        if st.button("📊 Dashboard", use_container_width=True):
-            st.switch_page("pages/2_dashboard.py")
+        # Other pages
+        if st.button("🏠 About", use_container_width=True):
+            st.switch_page("pages/1_home.py")
 
         # Submit project
         if st.button("📝 Submit Project", use_container_width=True):
@@ -91,6 +109,215 @@ def render_sidebar():
 
         # Footer
         render_sidebar_footer()
+
+def render_welcome_banner():
+    """Render welcome banner for the main dashboard page"""
+    st.markdown("""
+    <div style="
+        background: linear-gradient(135deg, #0066FF 0%, #4ECDC4 100%);
+        padding: 2rem;
+        margin: -1rem -1rem 2rem -1rem;
+        border-radius: 0 0 20px 20px;
+        text-align: center;
+        color: white;
+    ">
+        <h1 style="
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        ">🌍 Atlas 3+3 Dashboard</h1>
+        <p style="
+            font-size: 1.2rem;
+            margin: 0;
+            opacity: 0.95;
+        ">
+            Explore 22 verified real-world sustainable development projects from around the globe
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+def render_kpi_widgets(filtered_projects: List[Dict[str, Any]]):
+    """Render 5 KPI widgets in header"""
+    if not filtered_projects:
+        projects_df = pd.DataFrame()
+    else:
+        projects_df = pd.DataFrame(filtered_projects)
+
+    # Calculate metrics
+    total_projects = len(projects_df)
+    total_cities = projects_df['city'].nunique() if not projects_df.empty else 0
+    total_countries = projects_df['country'].nunique() if not projects_df.empty else 0
+
+    if not projects_df.empty:
+        funding_needed = projects_df['funding_needed_usd'].fillna(0).sum()
+        funding_spent = projects_df[projects_df['project_status'] == 'Implemented']['funding_needed_usd'].fillna(0).sum()
+    else:
+        funding_needed = 0
+        funding_spent = 0
+
+    # Display KPIs
+    col1, col2, col3, col4, col5 = st.columns(5)
+
+    with col1:
+        st.metric(
+            label="📊 Total Projects",
+            value=format_large_number(total_projects),
+            delta=None
+        )
+
+    with col2:
+        st.metric(
+            label="🏙️ Cities",
+            value=format_large_number(total_cities),
+            delta=None
+        )
+
+    with col3:
+        st.metric(
+            label="🌍 Countries",
+            value=format_large_number(total_countries),
+            delta=None
+        )
+
+    with col4:
+        funding_display = format_currency(funding_needed)
+        if funding_needed >= 1000000:
+            funding_display = f"${funding_needed/1000000:.1f}M"
+        st.metric(
+            label="💰 Funding Needed",
+            value=funding_display,
+            delta=None
+        )
+
+    with col5:
+        spent_display = format_currency(funding_spent)
+        if funding_spent >= 1000000:
+            spent_display = f"${funding_spent/1000000:.1f}M"
+        st.metric(
+            label="✅ Funding Spent",
+            value=spent_display,
+            delta=None
+        )
+
+def render_filter_bar(db) -> Dict[str, Any]:
+    """Render filter controls and return selected filters"""
+    st.subheader("🔍 Filters")
+
+    col1, col2, col3, col4, col5 = st.columns([2, 2, 2, 2, 1])
+
+    with col1:
+        region_options = ["All Regions"] + list(UIA_REGIONS.values())
+        selected_region = st.selectbox("UIA Region", region_options, key="region_filter")
+
+    with col2:
+        sdg_options = ["All SDGs"] + [f"{k}. {v['name']}" for k, v in SDGS.items()]
+        selected_sdg = st.selectbox("SDG", sdg_options, key="sdg_filter")
+
+    with col3:
+        cities = db.get_unique_cities()
+        city_options = ["All Cities"] + cities
+        selected_city = st.selectbox("City", city_options, key="city_filter")
+
+    with col4:
+        organizations = db.get_unique_organizations()
+        org_options = ["All Organizations"] + organizations
+        selected_org = st.selectbox("Funded by", org_options, key="org_filter")
+
+    with col5:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("🗑️ Clear Filters", use_container_width=True):
+            st.session_state.region_filter = "All Regions"
+            st.session_state.sdg_filter = "All SDGs"
+            st.session_state.city_filter = "All Cities"
+            st.session_state.org_filter = "All Organizations"
+            st.rerun()
+
+    # Convert selections to filter parameters
+    filters = {}
+
+    if selected_region != "All Regions":
+        filters['region'] = selected_region
+
+    if selected_sdg != "All SDGs":
+        sdg_id = int(selected_sdg.split(".")[0])
+        filters['sdg'] = sdg_id
+
+    if selected_city != "All Cities":
+        filters['city'] = selected_city
+
+    if selected_org != "All Organizations":
+        filters['funded_by'] = selected_org
+
+    return filters
+
+def render_enhanced_map(projects: List[Dict[str, Any]]):
+    """Render enhanced Folium map with bigger display"""
+    if not projects:
+        st.info("No projects to display on map")
+        return None
+
+    projects_df = pd.DataFrame(projects)
+
+    # Filter projects with coordinates
+    map_projects = projects_df.dropna(subset=['latitude', 'longitude'])
+
+    if map_projects.empty:
+        st.info("No projects have coordinate data for map display")
+        return None
+
+    # Calculate map bounds
+    bounds = get_map_bounds(map_projects.to_dict('records'))
+
+    # Create map
+    if bounds:
+        center_lat = (bounds[0][0] + bounds[1][0]) / 2
+        center_lon = (bounds[0][1] + bounds[1][1]) / 2
+        zoom = 3
+    else:
+        center_lat, center_lon = DEFAULT_MAP_CENTER
+        zoom = 2
+
+    m = folium.Map(
+        location=[center_lat, center_lon],
+        zoom_start=zoom,
+        tiles="OpenStreetMap"
+    )
+
+    # Add markers
+    for _, project in map_projects.iterrows():
+        status = project['project_status']
+        marker_settings = MAP_MARKER_SETTINGS.get(status, MAP_MARKER_SETTINGS['default'])
+
+        popup_html = f"""
+        <div style="width: 300px;">
+            <h4 style="margin: 0 0 10px 0; color: #0066FF;">{project['project_name']}</h4>
+            <p style="margin: 5px 0;"><strong>📍 Location:</strong> {project['city']}, {project['country']}</p>
+            <p style="margin: 5px 0;"><strong>📊 Status:</strong> {project['project_status']}</p>
+            <p style="margin: 5px 0;"><strong>💰 Funding:</strong> {format_currency(project['funding_needed_usd']) if pd.notna(project['funding_needed_usd']) else 'Not specified'}</p>
+            <p style="margin: 5px 0;"><strong>🏢 Organization:</strong> {project['organization_name']}</p>
+            <p style="margin: 10px 0 0 0; font-size: 0.9em; color: #666;">{project['brief_description'][:100]}...</p>
+        </div>
+        """
+
+        folium.Marker(
+            location=[project['latitude'], project['longitude']],
+            popup=folium.Popup(popup_html, max_width=350),
+            tooltip=project['project_name'],
+            icon=folium.Icon(
+                color=marker_settings['color'],
+                icon=marker_settings['icon']
+            )
+        ).add_to(m)
+
+    # Fit map to bounds if available
+    if bounds:
+        m.fit_bounds(bounds, padding=[20, 20])
+
+    # Display map with enhanced size
+    map_data = st_folium(m, width=None, height=800, returned_objects=["last_object_clicked"])
+
+    return map_data
 
 @st.cache_data(ttl=300)  # Cache for 5 minutes
 def get_quick_stats():
@@ -158,148 +385,7 @@ def render_sidebar_footer():
     </div>
     """, unsafe_allow_html=True)
 
-def render_main_content():
-    """Render the main content area (home page by default)"""
-    # Check if we should redirect to a specific page
-    query_params = st.query_params
-
-    if "page" in query_params:
-        page = query_params["page"]
-        if page == "dashboard":
-            st.switch_page("pages/2_dashboard.py")
-        elif page == "submit":
-            st.switch_page("pages/3_submit.py")
-        elif page == "admin":
-            st.switch_page("pages/4_admin.py")
-
-    # Default to home page content
-    render_home_page()
-
-def render_home_page():
-    """Render the home page content in main area"""
-    # Welcome banner
-    st.markdown("""
-    <div style="
-        background: linear-gradient(135deg, #0066FF 0%, #4ECDC4 100%);
-        padding: 3rem 2rem;
-        margin: -1rem -1rem 2rem -1rem;
-        border-radius: 0 0 20px 20px;
-        text-align: center;
-        color: white;
-    ">
-        <h1 style="
-            font-size: 3rem;
-            font-weight: 700;
-            margin-bottom: 1rem;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
-        ">Welcome to Atlas 3+3</h1>
-        <h2 style="
-            font-size: 1.3rem;
-            font-weight: 300;
-            margin-bottom: 1.5rem;
-            opacity: 0.9;
-        ">Discover, Share, and Scale Sustainable Development Projects</h2>
-        <p style="
-            max-width: 700px;
-            margin: 0 auto;
-            font-size: 1.1rem;
-            line-height: 1.6;
-            opacity: 0.95;
-        ">
-            Explore innovative projects from around the world that are making a real difference
-            in communities. Connect with changemakers, find inspiration, and contribute to
-            building a more sustainable future.
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Main action buttons
-    st.markdown("### 🚀 Get Started")
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        if st.button("🌍 Explore Projects", type="primary", use_container_width=True, help="Browse our curated collection of sustainable development projects"):
-            st.switch_page("pages/2_dashboard.py")
-
-        st.markdown("""
-        <div style="text-align: center; padding: 1rem; background: #f8f9fa; border-radius: 10px; margin-top: 1rem;">
-            <h4>🔍 Discover</h4>
-            <p style="margin: 0; font-size: 0.9rem;">Browse interactive maps, charts, and detailed project information from around the globe.</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col2:
-        if st.button("📝 Submit Your Project", use_container_width=True, help="Share your sustainable development project with the global community"):
-            st.switch_page("pages/3_submit.py")
-
-        st.markdown("""
-        <div style="text-align: center; padding: 1rem; background: #f8f9fa; border-radius: 10px; margin-top: 1rem;">
-            <h4>📤 Share</h4>
-            <p style="margin: 0; font-size: 0.9rem;">Submit your project for review and publication in our global atlas.</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col3:
-        if st.button("💡 Learn More", use_container_width=True, help="Learn about our mission and how Atlas 3+3 works"):
-            st.switch_page("pages/1_home.py")
-
-        st.markdown("""
-        <div style="text-align: center; padding: 1rem; background: #f8f9fa; border-radius: 10px; margin-top: 1rem;">
-            <h4>🎯 Connect</h4>
-            <p style="margin: 0; font-size: 0.9rem;">Learn about our mission and connect with other changemakers worldwide.</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # Featured highlights
-    st.markdown("### 🌟 Platform Highlights")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("""
-        #### 🗺️ Interactive Global Map
-        Explore projects on an interactive world map with detailed location data,
-        project status indicators, and easy filtering by region, SDG, or project type.
-
-        #### 📊 Rich Analytics
-        Dive deep into project data with comprehensive charts showing SDG distribution,
-        funding patterns, regional analysis, and implementation progress.
-        """)
-
-    with col2:
-        st.markdown("""
-        #### 🎯 SDG Alignment
-        All projects are mapped to the UN Sustainable Development Goals, making it
-        easy to find initiatives that align with specific global priorities.
-
-        #### 🔍 Rigorous Review
-        Our expert review panel ensures that only high-quality, impactful projects
-        with replication potential are featured in the atlas.
-        """)
-
-    # Recent activity or featured content could go here
-    st.markdown("---")
-
-    # Call to action
-    st.markdown("""
-    <div style="
-        text-align: center;
-        padding: 2rem;
-        background: linear-gradient(135deg, #28A745 0%, #20C997 100%);
-        border-radius: 15px;
-        color: white;
-        margin: 2rem 0;
-    ">
-        <h3 style="margin-bottom: 1rem;">Ready to Make an Impact?</h3>
-        <p style="margin-bottom: 1.5rem; opacity: 0.9;">
-            Join our global community of sustainable development practitioners,
-            researchers, and changemakers.
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+# Functions removed - dashboard is now the main page
 
 def initialize_database():
     """Initialize the database on first run"""
@@ -316,7 +402,7 @@ def initialize_database():
         return False
 
 def main():
-    """Main application function"""
+    """Main application function - Dashboard as landing page"""
     # Configure the page
     configure_page()
 
@@ -324,11 +410,105 @@ def main():
     if not initialize_database():
         st.stop()
 
+    # Initialize database
+    db = get_database()
+
     # Render sidebar
     render_sidebar()
 
-    # Render main content
-    render_main_content()
+    # Render welcome banner
+    render_welcome_banner()
+
+    # Render filters and get selected criteria
+    filters = render_filter_bar(db)
+
+    # Get filtered projects
+    if filters:
+        filtered_projects = db.get_projects_by_filters(**filters)
+    else:
+        filtered_projects = db.get_all_published_projects()
+
+    # Render KPI widgets
+    render_kpi_widgets(filtered_projects)
+
+    st.markdown("---")
+
+    # Enhanced Map Section - Full Width
+    st.subheader("🗺️ Global Project Map")
+    st.markdown("*Explore all 22 sustainable development projects across the globe*")
+
+    map_data = render_enhanced_map(filtered_projects)
+
+    st.markdown("---")
+
+    # Quick Analytics Row
+    if filtered_projects:
+        st.subheader("📊 Quick Analytics")
+
+        col1, col2 = st.columns(2)
+
+        projects_df = pd.DataFrame(filtered_projects)
+
+        with col1:
+            # Regional distribution
+            region_counts = projects_df.groupby('region_name').size().reset_index(name='count')
+            fig_region = px.pie(
+                region_counts,
+                values='count',
+                names='region_name',
+                title="Projects by Region"
+            )
+            fig_region.update_layout(height=400)
+            st.plotly_chart(fig_region, use_container_width=True)
+
+        with col2:
+            # Status distribution
+            status_counts = projects_df.groupby('project_status').size().reset_index(name='count')
+            fig_status = px.bar(
+                status_counts,
+                x='project_status',
+                y='count',
+                title="Projects by Status",
+                color='project_status'
+            )
+            fig_status.update_layout(height=400, showlegend=False)
+            st.plotly_chart(fig_status, use_container_width=True)
+
+        st.markdown("---")
+
+        # Projects preview table
+        st.subheader("📋 Projects Overview")
+
+        # Simple table view
+        display_df = projects_df.copy()
+        display_df['funding_display'] = display_df['funding_needed_usd'].apply(
+            lambda x: format_currency(x) if pd.notna(x) else "Not specified"
+        )
+
+        table_df = display_df[[
+            'project_name', 'city', 'country', 'project_status', 'funding_display'
+        ]].head(10)  # Show first 10 projects
+
+        table_df.columns = ['Project Name', 'City', 'Country', 'Status', 'Funding Needed']
+
+        st.dataframe(table_df, use_container_width=True, hide_index=True)
+
+        if len(filtered_projects) > 10:
+            st.info(f"Showing 10 of {len(filtered_projects)} projects. Use filters above to refine results.")
+
+    else:
+        st.info("No projects found matching your current filters.")
+
+    # Footer with navigation hints
+    st.markdown("---")
+    st.markdown("""
+    <div style="text-align: center; padding: 1rem; background: #f8f9fa; border-radius: 10px;">
+        <p style="margin: 0;">
+            💡 <strong>Tip:</strong> Use the sidebar to navigate to other sections:
+            📝 Submit your project | 🏠 Learn more about Atlas 3+3
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
