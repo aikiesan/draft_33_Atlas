@@ -63,6 +63,11 @@ class Config:
 
     def _configure_database(self) -> DatabaseConfig:
         """Configure database based on environment"""
+        # Force SQLite on Streamlit Cloud or when PostgreSQL deps are not available
+        if self._is_streamlit_cloud() or not self._postgresql_available():
+            logger.info("Using SQLite database (Streamlit Cloud or PostgreSQL not available)")
+            return self._configure_sqlite()
+
         db_type_str = os.getenv("ATLAS_DB_TYPE", "sqlite").lower()
 
         try:
@@ -78,12 +83,37 @@ class Config:
         else:
             raise ValueError(f"Unsupported database type: {db_type}")
 
+    def _is_streamlit_cloud(self) -> bool:
+        """Detect if running on Streamlit Cloud"""
+        # Streamlit Cloud sets specific environment variables
+        return (
+            os.getenv("STREAMLIT_SHARING_MODE") is not None or
+            os.getenv("STREAMLIT_SERVER_PORT") is not None or
+            "/mount/src/" in os.getcwd() or
+            "streamlit.app" in os.getenv("HOSTNAME", "")
+        )
+
+    def _postgresql_available(self) -> bool:
+        """Check if PostgreSQL dependencies are available"""
+        try:
+            import psycopg2
+            return True
+        except ImportError:
+            logger.warning("PostgreSQL dependencies not available, falling back to SQLite")
+            return False
+
     def _configure_sqlite(self) -> DatabaseConfig:
         """Configure SQLite database"""
-        db_path = os.getenv("ATLAS_SQLITE_PATH", "data/atlas_db.sqlite")
+        # Use temp directory on Streamlit Cloud
+        if self._is_streamlit_cloud():
+            db_path = os.getenv("ATLAS_SQLITE_PATH", "/tmp/atlas_db.sqlite")
+        else:
+            db_path = os.getenv("ATLAS_SQLITE_PATH", "data/atlas_db.sqlite")
 
         # Ensure directory exists
-        os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else ".", exist_ok=True)
+        db_dir = os.path.dirname(db_path)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
 
         connection_string = f"sqlite:///{db_path}"
 

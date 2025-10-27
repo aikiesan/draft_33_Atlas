@@ -8,5 +8,7 @@ sqlalchemy==2.0.25
 python-dotenv==1.0.0
 pydantic==2.5.2
 openpyxl==3.1.2
-shapely==2.0.2
+
+# Additional geospatial libraries
 geopy==2.4.1
+shapely==2.0.2

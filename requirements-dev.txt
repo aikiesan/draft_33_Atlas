@@ -1,0 +1,6 @@
+# Development requirements (includes PostgreSQL support)
+-r requirements.txt
+
+# PostgreSQL dependencies for local development
+psycopg2-binary==2.9.9
+geoalchemy2==0.14.2
