@@ -1,9 +1,9 @@
 """
 Atlas 3+3 - Main Application with Interactive Dashboard
-A curated atlas of sustainable development projects featuring 30 real-world SDG initiatives
+A curated atlas of sustainable development projects featuring 22 real-world SDG initiatives
 
 Run with: streamlit run app.py
-Updated: 2025-10-27 13:00 - Force fresh deployment to fix st.query_params error
+Updated: 2025-10-27 13:05 - Database complete with all 22 verified projects
 DEPLOYMENT REBUILD: Streamlit Cloud cache invalidation
 """
 
@@ -37,7 +37,8 @@ from src.utils import (
 
 # Initialize database using new interface
 @st.cache_resource
-def get_database():
+def get_database(cache_version="v2025-10-27-13:05"):
+    """Get cached database instance with cache versioning"""
     return get_cached_database()
 
 def configure_page():
@@ -321,8 +322,8 @@ def render_enhanced_map(projects: List[Dict[str, Any]]):
 
     return map_data
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
-def get_quick_stats():
+@st.cache_data(ttl=300, hash_funcs={str: lambda x: "v2025-10-27-13:05"})  # Cache for 5 minutes
+def get_quick_stats(cache_key="v2025-10-27-13:05"):
     """Get quick statistics for sidebar"""
     try:
         db = get_cached_database()
