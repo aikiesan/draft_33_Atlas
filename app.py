@@ -1,11 +1,13 @@
 """
 Atlas 3+3 - Main Application with Interactive Dashboard
-A curated atlas of sustainable development projects featuring 22 real-world SDG initiatives
+A curated atlas of sustainable development projects featuring 30 real-world SDG initiatives
 
 Run with: streamlit run app.py
-Updated: 2025-10-27 - Enhanced dashboard with bigger map display
+Updated: 2025-10-27 13:00 - Force fresh deployment to fix st.query_params error
+DEPLOYMENT REBUILD: Streamlit Cloud cache invalidation
 """
 
+# Core imports
 import streamlit as st
 import sys
 import os
@@ -511,4 +513,5 @@ def main():
     """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
+    # CACHE_BUST: 2025-10-27-13:00 - Force fresh Streamlit Cloud deployment
     main()
