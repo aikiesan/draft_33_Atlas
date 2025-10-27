@@ -391,17 +391,40 @@ def render_sidebar_footer():
 # Functions removed - dashboard is now the main page
 
 def initialize_database():
-    """Initialize the database on first run"""
+    """Initialize the database on first run with automatic data loading"""
     try:
         db = get_cached_database()
+
         # Test database connection
-        if db.health_check():
-            return True
-        else:
+        if not db.health_check():
             st.error("Database health check failed")
             return False
+
+        # Check if database has data
+        projects = db.get_all_published_projects()
+        project_count = len(projects)
+
+        # Auto-load comprehensive data if database is empty or has too few projects
+        if project_count < 20:  # Expect 22 projects
+            st.info(f"Database has {project_count} projects. Loading comprehensive SDG data...")
+
+            # Import and run the data loading function
+            from load_sdg_projects import load_comprehensive_sdg_data
+            load_comprehensive_sdg_data()
+
+            # Refresh cache and verify
+            st.cache_resource.clear()
+            db = get_cached_database()
+            projects = db.get_all_published_projects()
+            new_count = len(projects)
+
+            st.success(f"✅ Loaded {new_count} projects successfully!")
+
+        return True
+
     except Exception as e:
         st.error(f"Database initialization failed: {e}")
+        st.exception(e)  # Show full traceback for debugging
         return False
 
 def main():
@@ -422,6 +445,36 @@ def main():
     # Render welcome banner
     render_welcome_banner()
 
+    # Debug status section
+    all_projects = db.get_all_published_projects()
+    project_count = len(all_projects)
+
+    # Show database status with color coding
+    if project_count >= 22:
+        status_color = "green"
+        status_icon = "✅"
+        status_msg = f"Database Status: {status_icon} All {project_count} projects loaded"
+    elif project_count >= 10:
+        status_color = "orange"
+        status_icon = "⚠️"
+        status_msg = f"Database Status: {status_icon} Partial data - {project_count}/22 projects"
+    else:
+        status_color = "red"
+        status_icon = "❌"
+        status_msg = f"Database Status: {status_icon} Limited data - {project_count}/22 projects"
+
+    st.markdown(f"""
+    <div style="
+        background-color: {status_color}22;
+        border-left: 4px solid {status_color};
+        padding: 10px;
+        margin: 10px 0;
+        border-radius: 4px;
+    ">
+        <strong>{status_msg}</strong>
+    </div>
+    """, unsafe_allow_html=True)
+
     # Render filters and get selected criteria
     filters = render_filter_bar(db)
 
@@ -438,7 +491,7 @@ def main():
 
     # Enhanced Map Section - Full Width
     st.subheader("🗺️ Global Project Map")
-    st.markdown("*Explore all 22 sustainable development projects across the globe*")
+    st.markdown(f"*Explore all {len(filtered_projects)} sustainable development projects across the globe*")
 
     map_data = render_enhanced_map(filtered_projects)
 
